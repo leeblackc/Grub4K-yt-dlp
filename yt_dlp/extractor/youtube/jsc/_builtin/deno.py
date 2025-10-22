@@ -71,6 +71,7 @@ class DenoJCP(JsRuntimeChalBaseJCP, BuiltinIEContentProvider):
     def _run_js_runtime(self, stdin: str, /) -> str:
         options = [*self._DENO_BASE_OPTIONS]
         if self._lib_script.variant == ScriptVariant.DENO_NPM and self._NPM_PACKAGES_CACHED:
+            pass
             # options.append('--cached-only')
         elif self._lib_script.variant != ScriptVariant.DENO_NPM:
             options.append('--no-npm')
