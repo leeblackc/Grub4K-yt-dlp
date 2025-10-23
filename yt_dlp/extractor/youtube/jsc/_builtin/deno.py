@@ -61,8 +61,7 @@ class DenoJCP(JsRuntimeChalBaseJCP, BuiltinIEContentProvider):
         # Check if npm packages are cached, so we can run without --remote-components ejs:npm
         self.logger.debug('Checking if npm packages are cached')
         try:
-            # , '--cached-only'
-            self._run_deno(stdin, [*self._DENO_BASE_OPTIONS])
+            self._run_deno(stdin, [*self._DENO_BASE_OPTIONS, '--cached-only'])
         except JsChallengeProviderError as e:
             self.logger.trace(f'Deno npm packages not cached: {e}')
             return False
@@ -71,11 +70,10 @@ class DenoJCP(JsRuntimeChalBaseJCP, BuiltinIEContentProvider):
     def _run_js_runtime(self, stdin: str, /) -> str:
         options = [*self._DENO_BASE_OPTIONS]
         if self._lib_script.variant == ScriptVariant.DENO_NPM and self._NPM_PACKAGES_CACHED:
-            pass
-            # options.append('--cached-only')
+            options.append('--cached-only')
         elif self._lib_script.variant != ScriptVariant.DENO_NPM:
             options.append('--no-npm')
-            # options.append('--cached-only')
+            options.append('--cached-only')
         return self._run_deno(stdin, options)
 
     def _run_deno(self, stdin, options) -> str:
