@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import os
 import re
 import shlex
 import subprocess
 
-from yt_dlp.extractor.youtube.jsc._builtin.runtime import (
-    JsRuntimeChalBaseJCP,
+from yt_dlp.extractor.youtube.jsc._builtin.ejs import (
+    EJSBaseJCP,
     Script,
     ScriptSource,
     ScriptType,
@@ -22,10 +23,11 @@ from yt_dlp.extractor.youtube.jsc.provider import (
 from yt_dlp.extractor.youtube.pot._provider import BuiltinIEContentProvider
 from yt_dlp.extractor.youtube.pot.provider import provider_bug_report_message
 from yt_dlp.utils import Popen, remove_terminal_sequences
+from yt_dlp.utils.networking import HTTPHeaderDict, clean_proxies
 
 
 @register_provider
-class DenoJCP(JsRuntimeChalBaseJCP, BuiltinIEContentProvider):
+class DenoJCP(EJSBaseJCP, BuiltinIEContentProvider):
     PROVIDER_NAME = 'deno'
     JS_RUNTIME_NAME = 'deno'
 
@@ -34,10 +36,8 @@ class DenoJCP(JsRuntimeChalBaseJCP, BuiltinIEContentProvider):
     _NPM_PACKAGES_CACHED = False
 
     def _iter_script_sources(self):
-        for source, func in super()._iter_script_sources():
-            if source == ScriptSource.WEB:
-                yield ScriptSource.BUILTIN, self._deno_npm_source
-            yield source, func
+        yield from super()._iter_script_sources()
+        yield ScriptSource.BUILTIN, self._deno_npm_source
 
     def _deno_npm_source(self, script_type: ScriptType, /) -> Script | None:
         if script_type != ScriptType.LIB:
@@ -74,7 +74,21 @@ class DenoJCP(JsRuntimeChalBaseJCP, BuiltinIEContentProvider):
         elif self._lib_script.variant != ScriptVariant.DENO_NPM:
             options.append('--no-npm')
             options.append('--cached-only')
+        if self.ie.get_param('nocheckcertificate'):
+            options.append('--unsafely-ignore-certificate-errors')
         return self._run_deno(stdin, options)
+
+    def _get_env_options(self) -> dict[str, str]:
+        options = os.environ.copy()  # pass through existing deno env vars
+        request_proxies = self.ie._downloader.proxies.copy()
+        clean_proxies(request_proxies, HTTPHeaderDict())
+        # Apply 'all' proxy first, then allow per-scheme overrides
+        if 'all' in request_proxies and request_proxies['all'] is not None:
+            options['HTTP_PROXY'] = options['HTTPS_PROXY'] = request_proxies['all']
+        for key, env in (('http', 'HTTP_PROXY'), ('https', 'HTTPS_PROXY'), ('no', 'NO_PROXY')):
+            if key in request_proxies and request_proxies[key] is not None:
+                options[env] = request_proxies[key]
+        return options
 
     def _run_deno(self, stdin, options) -> str:
         cmd = [self.runtime_info.path, 'run', *options, '-']
@@ -85,6 +99,7 @@ class DenoJCP(JsRuntimeChalBaseJCP, BuiltinIEContentProvider):
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
+            env=self._get_env_options(),
         ) as proc:
             stdout, stderr = proc.communicate_or_kill(stdin)
             stderr = self._clean_stderr(stderr)
@@ -98,8 +113,9 @@ class DenoJCP(JsRuntimeChalBaseJCP, BuiltinIEContentProvider):
     def _clean_stderr(self, stderr):
         return '\n'.join(
             line for line in stderr.splitlines()
-            if not re.match(r'^Download\s+https\S+$', remove_terminal_sequences(line))
-        )
+            if not (
+                re.match(r'^Download\s+https\S+$', remove_terminal_sequences(line))
+                or re.match(r'DANGER: TLS certificate validation is disabled for all hostnames', remove_terminal_sequences(line))))
 
 
 @register_preference(DenoJCP)

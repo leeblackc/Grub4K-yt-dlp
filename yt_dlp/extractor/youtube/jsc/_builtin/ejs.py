@@ -5,12 +5,9 @@ import dataclasses
 import enum
 import functools
 import hashlib
-import importlib.resources
 import json
-import sys
 
-import yt_dlp
-from yt_dlp.dependencies import yt_dlp_ejs
+from yt_dlp.dependencies import yt_dlp_ejs as _has_ejs
 from yt_dlp.extractor.youtube.jsc._builtin import vendor
 from yt_dlp.extractor.youtube.jsc.provider import (
     JsChallengeProvider,
@@ -24,6 +21,9 @@ from yt_dlp.extractor.youtube.jsc.provider import (
 )
 from yt_dlp.extractor.youtube.pot.provider import provider_bug_report_message
 from yt_dlp.utils._jsruntime import JsRuntimeInfo
+
+if _has_ejs:
+    import yt_dlp_ejs.yt.solver
 
 TYPE_CHECKING = False
 if TYPE_CHECKING:
@@ -46,11 +46,10 @@ class ScriptVariant(enum.Enum):
 
 
 class ScriptSource(enum.Enum):
-    PYPACKAGE = 'python package'
-    BINARY = 'binary'
-    CACHE = 'cache'
-    WEB = 'web'
-    BUILTIN = 'builtin'
+    PYPACKAGE = 'python package'  # PyPI, PyInstaller exe, zipimport binary, etc
+    CACHE = 'cache'  # GitHub release assets (cached)
+    WEB = 'web'  # GitHub release assets (downloaded)
+    BUILTIN = 'builtin'  # vendored (full core script; import-only lib script + NPM cache)
 
 
 @dataclasses.dataclass
@@ -69,7 +68,7 @@ class Script:
         return f'<Script {self.type.value!r} v{self.version} (source: {self.source.value}) variant={self.variant.value!r} size={len(self.code)} hash={self.hash[:7]}...>'
 
 
-class JsRuntimeChalBaseJCP(JsChallengeProvider):
+class EJSBaseJCP(JsChallengeProvider):
     JS_RUNTIME_NAME: str
     _CACHE_SECTION = 'challenge-solver'
 
@@ -210,20 +209,22 @@ class JsRuntimeChalBaseJCP(JsChallengeProvider):
             script = from_source(script_type)
             if not script:
                 continue
-            if not self.is_dev and script.version != self._SCRIPT_VERSION:
-                self.logger.warning(
-                    f'Challenge solver {script_type.value} script version {script.version} '
-                    f'is not supported (source: {script.source.value}, variant: {script.variant}, supported version: {self._SCRIPT_VERSION})')
-            script_hashes = self._ALLOWED_HASHES[script.type].get(script.variant, [])
-            if not self.is_dev and script_hashes and script.hash not in script_hashes:
-                self.logger.warning(
-                    f'Hash mismatch on challenge solver {script.type.value} script '
-                    f'(source: {script.source.value}, variant: {script.variant}, hash: {script.hash})!{provider_bug_report_message(self)}')
-            else:
-                self.logger.debug(
-                    f'Using challenge solver {script.type.value} script v{script.version} '
-                    f'(source: {script.source.value}, variant: {script.variant.value})')
-                return script
+            if not self.is_dev:
+                if script.version != self._SCRIPT_VERSION:
+                    self.logger.warning(
+                        f'Challenge solver {script_type.value} script version {script.version} '
+                        f'is not supported (source: {script.source.value}, variant: {script.variant}, supported version: {self._SCRIPT_VERSION})')
+                    continue
+                script_hashes = self._ALLOWED_HASHES[script.type].get(script.variant, [])
+                if script_hashes and script.hash not in script_hashes:
+                    self.logger.warning(
+                        f'Hash mismatch on challenge solver {script.type.value} script '
+                        f'(source: {script.source.value}, variant: {script.variant}, hash: {script.hash})!{provider_bug_report_message(self)}')
+                    continue
+            self.logger.debug(
+                f'Using challenge solver {script.type.value} script v{script.version} '
+                f'(source: {script.source.value}, variant: {script.variant.value})')
+            return script
 
         self._available = False
         raise JsChallengeProviderRejectedRequest(f'No usable challenge solver {script_type.value} script available')
@@ -231,13 +232,12 @@ class JsRuntimeChalBaseJCP(JsChallengeProvider):
     def _iter_script_sources(self) -> Generator[tuple[ScriptSource, Callable[[ScriptType], Script | None]]]:
         yield from [
             (ScriptSource.PYPACKAGE, self._pypackage_source),
-            (ScriptSource.BINARY, self._binary_source),
             (ScriptSource.CACHE, self._cached_source),
             (ScriptSource.BUILTIN, self._builtin_source),
             (ScriptSource.WEB, self._web_release_source)]
 
     def _pypackage_source(self, script_type: ScriptType, /) -> Script | None:
-        if not yt_dlp_ejs:
+        if not _has_ejs:
             return None
         try:
             code = yt_dlp_ejs.yt.solver.core() if script_type is ScriptType.CORE else yt_dlp_ejs.yt.solver.lib()
@@ -246,15 +246,6 @@ class JsRuntimeChalBaseJCP(JsChallengeProvider):
                 f'Failed to load challenge solver {script_type.value} script from python package: {e}{provider_bug_report_message(self)}')
             return None
         return Script(script_type, ScriptVariant.MINIFIED, ScriptSource.PYPACKAGE, yt_dlp_ejs.version, code)
-
-    def _binary_source(self, script_type: ScriptType, /) -> Script | None:
-        if (
-            getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS')
-            and importlib.resources.is_resource(yt_dlp, self._MIN_SCRIPT_FILENAMES[script_type])
-        ):
-            code = importlib.resources.read_text(yt_dlp, self._MIN_SCRIPT_FILENAMES[script_type])
-            return Script(script_type, ScriptVariant.MINIFIED, ScriptSource.BINARY, self._SCRIPT_VERSION, code)
-        return None
 
     def _cached_source(self, script_type: ScriptType, /) -> Script | None:
         if data := self.ie.cache.load(self._CACHE_SECTION, script_type.value):

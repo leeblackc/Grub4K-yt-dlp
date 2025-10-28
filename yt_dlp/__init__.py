@@ -68,6 +68,7 @@ from .utils._jsruntime import (
     BunJsRuntime as _BunJsRuntime,
     DenoJsRuntime as _DenoJsRuntime,
     NodeJsRuntime as _NodeJsRuntime,
+    QuickJsRuntime as _QuickJsRuntime,
 )
 from .YoutubeDL import YoutubeDL
 
@@ -1093,11 +1094,15 @@ def main(argv=None):
 
 from .extractor import gen_extractors, list_extractors
 
-# Register JS runtimes
-from .globals import supported_js_runtimes
+# Register JS runtimes and remote components
+from .globals import supported_js_runtimes, supported_remote_components
 supported_js_runtimes.value['deno'] = _DenoJsRuntime
 supported_js_runtimes.value['node'] = _NodeJsRuntime
 supported_js_runtimes.value['bun'] = _BunJsRuntime
+supported_js_runtimes.value['quickjs'] = _QuickJsRuntime
+
+supported_remote_components.value.append('ejs:github')
+supported_remote_components.value.append('ejs:npm')
 
 __all__ = [
     'YoutubeDL',
