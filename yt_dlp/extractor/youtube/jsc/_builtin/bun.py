@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import shlex
 import subprocess
 import urllib.parse
@@ -32,6 +33,8 @@ from yt_dlp.utils.networking import HTTPHeaderDict, clean_proxies
 # - No sandboxing options available
 # - Cannot detect if npm packages are cached without potentially downloading them.
 #   `--no-install` appears to disable the cache.
+# - npm auto-install may fail with an integrity error when using HTTP proxies
+# - npm auto-install HTTP proxy support may be limited on older Bun versions
 
 
 @register_provider
@@ -42,13 +45,8 @@ class BunJCP(EJSBaseJCP, BuiltinIEContentProvider):
     SUPPORTED_PROXY_SCHEMES = ['http', 'https']
 
     def _iter_script_sources(self):
-        for source, func in super()._iter_script_sources():
-            if source == ScriptSource.WEB:
-                # Prioritize GitHub scripts over Bun NPM script as bun NPM auto-install is unreliable.
-                yield source, func
-                yield ScriptSource.BUILTIN, self._bun_npm_source
-            else:
-                yield source, func
+        yield from super()._iter_script_sources()
+        yield ScriptSource.BUILTIN, self._bun_npm_source
 
     def _bun_npm_source(self, script_type: ScriptType, /) -> Script | None:
         if script_type != ScriptType.LIB:
@@ -123,12 +121,18 @@ class BunJCP(EJSBaseJCP, BuiltinIEContentProvider):
             env=self._get_env_options(),
         ) as proc:
             stdout, stderr = proc.communicate_or_kill(stdin)
+            stderr = self._clean_stderr(stderr)
             if proc.returncode or stderr:
-                msg = 'Error running bun process'
+                msg = f'Error running bun process (returncode: {proc.returncode})'
                 if stderr:
-                    msg = f'{msg}: {stderr}'
+                    msg = f'{msg}: {stderr.strip()}'
                 raise JsChallengeProviderError(msg)
         return stdout
+
+    def _clean_stderr(self, stderr):
+        return '\n'.join(
+            line for line in stderr.splitlines()
+            if not re.match(r'^Bun v\d+\.\d+\.\d+ \([\w\s]+\)$', line))
 
 
 @register_preference(BunJCP)

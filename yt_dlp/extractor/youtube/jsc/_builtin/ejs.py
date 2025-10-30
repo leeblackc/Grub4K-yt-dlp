@@ -19,6 +19,7 @@ from yt_dlp.extractor.youtube.jsc.provider import (
     NChallengeOutput,
     SigChallengeOutput,
 )
+from yt_dlp.extractor.youtube.pot._provider import configuration_arg
 from yt_dlp.extractor.youtube.pot.provider import provider_bug_report_message
 from yt_dlp.utils._jsruntime import JsRuntimeInfo
 
@@ -110,22 +111,25 @@ class EJSBaseJCP(JsChallengeProvider):
         # - dev: bypasses verification of script hashes and versions.
         # - repo: use a custom GitHub repository to fetch web script from.
         # - script_version: use a custom script version.
-        # E.g. --extractor-args "youtubejsc-ejs:dev=true;script_version=0.1.4"
-        self.ejs_settings = self.ie.get_param('extractor_args', {}).get('youtubejsc-ejs', {})
+        # E.g. --extractor-args "youtube-ejs:dev=true;script_version=0.1.4"
+        self.ejs_settings = self.ie.get_param('extractor_args', {}).get('youtube-ejs', {})
 
-        self.is_dev = self.ejs_settings.get('dev', []) == ['true']
+        self.is_dev = self.ejs_setting('dev', ['false'])[0] == 'true'
         if self.is_dev:
             self.report_dev_option('You have enabled dev mode for EJS JCP Providers.')
 
-        custom_repo = self.ejs_settings.get('repo', [None])[0]
+        custom_repo = self.ejs_setting('repo', [None])[0]
         if custom_repo:
             self.report_dev_option(f'You have set a custom GitHub repository for EJS JCP Providers ({custom_repo}).')
             self._REPOSITORY = custom_repo
 
-        custom_version = self.ejs_settings.get('script_version', [None])[0]
+        custom_version = self.ejs_setting('script_version', [None])[0]
         if custom_version:
             self.report_dev_option(f'You have set a custom EJS script version for EJS JCP Providers ({custom_version}).')
             self._SCRIPT_VERSION = custom_version
+
+    def ejs_setting(self, key, *args, **kwargs):
+        return configuration_arg(self.ejs_settings, key, *args, **kwargs)
 
     def report_dev_option(self, message: str):
         self.ie.report_warning(
@@ -154,6 +158,9 @@ class EJSBaseJCP(JsChallengeProvider):
                 cached = False
                 video_id = next((request.video_id for request in grouped_requests), None)
                 player = self._get_player(video_id, player_url)
+
+            # NB: This output belongs after the player request
+            self.logger.info(f'Solving JS challenges using {self.PROVIDER_NAME}')
 
             stdin = self._construct_stdin(player, cached, grouped_requests)
             stdout = self._run_js_runtime(stdin)
@@ -224,8 +231,8 @@ class EJSBaseJCP(JsChallengeProvider):
                         f'Hash mismatch on challenge solver {script.type.value} script '
                         f'(source: {script.source.value}, variant: {script.variant}, hash: {script.hash})!{provider_bug_report_message(self)}')
                     if script.source is ScriptSource.CACHE:
-                         self.logger.debug('Clearing invalid cached script')
-                         self.ie.cache.store(self._CACHE_SECTION, script_type.value, None)
+                        self.logger.debug('Clearing invalid cached script')
+                        self.ie.cache.store(self._CACHE_SECTION, script_type.value, None)
                     continue
             self.logger.debug(
                 f'Using challenge solver {script.type.value} script v{script.version} '

@@ -42,7 +42,7 @@ class DenoJCP(EJSBaseJCP, BuiltinIEContentProvider):
     def _deno_npm_source(self, script_type: ScriptType, /) -> Script | None:
         if script_type != ScriptType.LIB:
             return None
-        # Deno-specific lib scripts that uses Deno NPM imports
+        # Deno-specific lib scripts that use Deno NPM imports
         error_hook = lambda e: self.logger.warning(
             f'Failed to read deno challenge solver lib script: {e}{provider_bug_report_message(self)}')
         code = load_script(
@@ -76,6 +76,9 @@ class DenoJCP(EJSBaseJCP, BuiltinIEContentProvider):
             options.append('--cached-only')
         if self.ie.get_param('nocheckcertificate'):
             options.append('--unsafely-ignore-certificate-errors')
+        # XXX: Convert this extractor-arg into a general option if/when a JSI framework is implemented
+        if self.ejs_setting('deno_v8_jitless', ['false']) != ['false']:
+            options.append('--v8-flags=--jitless')
         return self._run_deno(stdin, options)
 
     def _get_env_options(self) -> dict[str, str]:
@@ -106,7 +109,7 @@ class DenoJCP(EJSBaseJCP, BuiltinIEContentProvider):
             if proc.returncode or stderr:
                 msg = f'Error running deno process (returncode: {proc.returncode})'
                 if stderr:
-                    msg = f'{msg}: {stderr}'
+                    msg = f'{msg}: {stderr.strip()}'
                 raise JsChallengeProviderError(msg)
         return stdout
 
